@@ -1,0 +1,793 @@
+:root {
+  --bg: #ece2cd;
+  --panel: #f5efe0;
+  --panel-raised: #f9f3e6;
+  --border: #d9cbae;
+  --accent: #7a3f4a;
+  --accent-dim: #c9a8ac;
+  --on-accent: #f7ece7;
+  --text: #23283a;
+  --text-muted: #8c8368;
+  --danger: #a13f3f;
+  --radius: 10px;
+  --heading-font: 'Lora', serif;
+  --gradient-strength: 18%;
+  --numeral-top: -0.2em;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: radial-gradient(ellipse 80% 60% at 8% 0%, color-mix(in srgb, var(--accent) var(--gradient-strength), var(--bg)), transparent 60%), var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow: hidden;
+}
+
+h1, h2 {
+  font-family: var(--heading-font);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+.hidden { display: none !important; }
+
+/* ---- Sign-in screen ---- */
+
+.signin-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.signin-card {
+  text-align: center;
+  max-width: 420px;
+  padding: 40px;
+}
+
+.signin-card h1 {
+  font-size: 2.5rem;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.signin-card p {
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.signin-status {
+  margin-top: 16px;
+  font-size: 0.9rem;
+  color: var(--danger);
+}
+
+/* ---- Buttons ---- */
+
+.btn-primary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.btn-primary:active { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  font-size: 1rem;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-secondary:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  font-size: 1rem;
+  padding: 12px 24px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  margin-right: auto; /* pushes Cancel/Save to the right, Delete to the left */
+}
+
+.btn-danger:hover { background: var(--danger); color: var(--on-accent); }
+
+/* ---- Dashboard layout ---- */
+
+.dashboard {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 32px 16px;
+  position: relative;
+  z-index: 0;
+}
+
+/* The giant month number is a purely decorative watermark behind
+   everything else — using var(--text) at low opacity means it reads as
+   a faint tint on any theme, light or dark, without needing a dedicated
+   per-theme token. */
+/* Each theme's display font has different line-box metrics (a cursive
+   script needs a much bigger pull-up than a condensed sans does to sit
+   at the same visual position), so the vertical offset is tuned per
+   theme via --numeral-top rather than shared — see themes.js. */
+.month-numeral {
+  position: absolute;
+  top: var(--numeral-top);
+  left: 32px;
+  z-index: -1;
+  font-family: var(--heading-font);
+  font-weight: 600;
+  font-size: 44vh;
+  line-height: 1;
+  color: var(--text);
+  opacity: 0.12;
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.board-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.month-heading {
+  font-family: var(--heading-font);
+  font-weight: 600;
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  line-height: 0.95;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.year-subtitle {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.btn-nav {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 34px;
+  height: 34px;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.btn-nav:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn-secondary, .btn-primary {
+  font-size: 0.9rem;
+  padding: 9px 18px;
+}
+
+.btn-add { font-size: 0.9rem; }
+
+/* ---- Month grid ---- */
+
+.month-daynames {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.month-daynames > div {
+  font-family: var(--heading-font);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 0 8px 6px;
+}
+
+.month-grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.week-row {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* A neutral "silver" hairline, faded at both ends — built from var(--text)
+   at fixed low opacity rather than the theme's own --border token, so it
+   reads the same neutral tone on every theme instead of picking up
+   whatever tint --border happens to carry. One continuous element per
+   week boundary (plus one after the last week) avoids the segmented-line
+   bug a per-cell border approach had. */
+.week-divider {
+  height: 1px;
+  flex-shrink: 0;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--text) 26%, transparent) 90px,
+    color-mix(in srgb, var(--text) 26%, transparent) calc(100% - 90px),
+    transparent
+  );
+}
+
+.week-days {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0 8px;
+  min-height: 0;
+  padding-top: 8px;
+}
+
+.day-cell {
+  padding: 0 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius);
+  cursor: default;
+  transition: background 0.1s ease;
+}
+
+.day-cell:hover { background: var(--panel); }
+
+.day-cell.outside-month {
+  opacity: 0.4;
+}
+
+.day-top-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.day-top-row .event-chip {
+  flex: 1;
+  min-width: 0;
+}
+
+.day-number {
+  font-family: var(--heading-font);
+  font-size: 1.1rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.day-cell.today .day-number { color: var(--accent); }
+
+.today-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px 1px var(--accent);
+  flex-shrink: 0;
+}
+
+.day-events {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  cursor: default;
+}
+
+.day-events.has-overflow {
+  cursor: pointer;
+}
+
+.event-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.event-tick {
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.event-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.event-time {
+  color: var(--chip-color, var(--accent));
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.more-chip {
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+  padding: 3px 6px 3px 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.more-chip:hover { text-decoration: underline; }
+
+.no-events {
+  display: none; /* month cells stay quiet when empty, unlike the week view */
+}
+
+/* ---- Day detail overlay ---- */
+
+.day-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.day-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  background: var(--panel-raised);
+  border-radius: var(--radius);
+}
+
+.detail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.detail-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.day-detail-row.editable {
+  cursor: pointer;
+}
+
+.day-detail-row.editable:hover {
+  background: var(--border);
+}
+
+.edit-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.sync-status {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-align: right;
+  margin: 10px 0 0;
+}
+
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  justify-content: flex-start;
+  margin-top: 10px;
+  flex-shrink: 0;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 2px;
+  opacity: 1;
+  transition: opacity 0.1s ease;
+}
+
+.legend-item:hover { color: var(--text); }
+
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ---- Add-event overlay ---- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 5, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.overlay-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  width: 420px;
+  max-width: 90vw;
+}
+
+.overlay-card h2 {
+  color: var(--accent);
+  font-size: 1.5rem;
+  margin-bottom: 20px;
+}
+
+.calendars-card {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+  width: 560px;
+}
+
+.calendars-scroll {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+#add-event-form label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 14px 0 6px;
+}
+
+#add-event-form input[type="text"],
+#add-event-form input[type="date"],
+#add-event-form input[type="time"],
+#add-event-form select {
+  width: 100%;
+  background: var(--panel-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 1rem;
+}
+
+#add-event-form input:focus,
+#add-event-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- Calendar picker ---- */
+
+.calendars-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calendar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+}
+
+.calendar-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.calendar-row input { width: auto; flex-shrink: 0; }
+
+.calendar-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.calendar-row span.label {
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.view-only-tag {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.account-tag {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.rename-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.rename-btn:hover {
+  color: var(--accent);
+  background: var(--panel-raised);
+}
+
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+  font-family: 'Inter', sans-serif;
+  background: var(--panel-raised);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--text);
+}
+
+.rename-input:focus {
+  outline: none;
+}
+
+.calendars-empty {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ---- Signed-in accounts ---- */
+
+.accounts-heading {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 18px 0 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+}
+
+.account-email {
+  font-size: 0.85rem;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-row.stale .account-email {
+  color: var(--text-muted);
+}
+
+.stale-tag {
+  font-size: 0.7rem;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.signout-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-family: 'Inter', sans-serif;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.signout-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.accounts-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* ---- Theme picker ---- */
+
+.theme-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.theme-swatch {
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.theme-swatch.active {
+  border-color: var(--accent);
+}
+
+.theme-swatch-preview {
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 6px;
+}
+
+.theme-swatch-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
+.theme-swatch-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-top: 8px;
+  color: var(--text);
+}
+
+.theme-swatch-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.time-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.checkbox-row input { width: auto; }
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.add-event-status {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: var(--danger);
+  min-height: 1.2em;
+}
+
+/* ---- Responsive fallback (in case of a non-720p screen) ---- */
+
+@media (max-width: 900px) {
+  .month-grid, .month-daynames { grid-template-columns: repeat(7, 1fr); }
+}

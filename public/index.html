@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Family Board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&family=Caveat:wght@600;700&family=Poppins:wght@500;600;700&family=Cormorant+Garamond:wght@600;700&family=Oswald:wght@500;600;700&family=Syne:wght@600;700;800&family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Sign-in gate, shown until Google auth completes -->
+  <div id="signin-screen" class="signin-screen">
+    <div class="signin-card">
+      <h1>Family Board</h1>
+      <p>Sign in with the Google account that has access to the family calendar.</p>
+      <button id="signin-btn" class="btn-primary">Sign in with Google</button>
+      <p id="signin-status" class="signin-status"></p>
+    </div>
+  </div>
+
+  <!-- Main dashboard, hidden until signed in -->
+  <div id="dashboard" class="dashboard hidden">
+
+    <div id="month-numeral" class="month-numeral" aria-hidden="true"></div>
+
+    <header class="board-header">
+      <div class="board-title">
+        <h1 id="month-range" class="month-heading"></h1>
+        <p id="year-subtitle" class="year-subtitle"></p>
+      </div>
+
+      <div class="header-actions">
+        <button id="prev-month-btn" class="btn-nav" aria-label="Previous month">‹</button>
+        <button id="next-month-btn" class="btn-nav" aria-label="Next month">›</button>
+        <button id="today-btn" class="btn-secondary">Today</button>
+        <button id="theme-btn" class="btn-secondary">Theme</button>
+        <button id="calendars-btn" class="btn-secondary">Calendars</button>
+        <button id="add-event-btn" class="btn-primary btn-add">+ Add event</button>
+      </div>
+    </header>
+
+    <div id="month-daynames" class="month-daynames"></div>
+
+    <main id="month-grid" class="month-grid">
+      <!-- day cells injected by app.js -->
+    </main>
+
+    <div id="calendar-legend" class="calendar-legend">
+      <!-- swatches injected by app.js -->
+    </div>
+
+    <p id="sync-status" class="sync-status"></p>
+  </div>
+
+
+  <!-- Day detail — full event list, shown when a day has more than fits inline -->
+  <div id="day-detail-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2 id="day-detail-heading"></h2>
+      <div id="day-detail-list" class="day-detail-list">
+        <!-- events injected by app.js -->
+      </div>
+      <div class="form-actions">
+        <button type="button" id="day-detail-add-btn" class="btn-secondary">+ Add event</button>
+        <button type="button" id="close-day-detail-btn" class="btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Theme picker, hidden until opened -->
+  <div id="theme-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2>Theme</h2>
+      <div id="theme-list" class="theme-list">
+        <!-- swatches injected by app.js -->
+      </div>
+      <div class="form-actions">
+        <button type="button" id="close-theme-btn" class="btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Calendar picker, hidden until opened -->
+  <div id="calendars-overlay" class="overlay hidden">
+    <div class="overlay-card calendars-card">
+      <h2>Calendars</h2>
+      <div class="calendars-scroll">
+        <div id="calendars-list" class="calendars-list">
+          <!-- checkboxes injected by app.js -->
+        </div>
+        <h3 class="accounts-heading">Signed-in Google accounts</h3>
+        <div id="accounts-list" class="accounts-list">
+          <!-- account rows injected by app.js -->
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="add-account-btn" class="btn-secondary">+ Add Google account</button>
+        <button type="button" id="close-calendars-btn" class="btn-primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/edit event panel, hidden until opened -->
+  <div id="add-event-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2 id="add-event-heading">Add event</h2>
+      <form id="add-event-form">
+        <label for="ev-title">Title</label>
+        <input type="text" id="ev-title" required autocomplete="off" placeholder="e.g. Dentist - Micah">
+
+        <label for="ev-calendar">Calendar</label>
+        <select id="ev-calendar"></select>
+
+        <label for="ev-date">Date</label>
+        <input type="date" id="ev-date" required>
+
+        <div class="time-row">
+          <div>
+            <label for="ev-start">Start time</label>
+            <input type="time" id="ev-start" required>
+          </div>
+          <div>
+            <label for="ev-end">End time</label>
+            <input type="time" id="ev-end" required>
+          </div>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="ev-allday">
+          All day
+        </label>
+
+        <div class="form-actions">
+          <button type="button" id="delete-event-btn" class="btn-danger hidden">Delete</button>
+          <button type="button" id="cancel-add-btn" class="btn-secondary">Cancel</button>
+          <button type="submit" id="save-event-btn" class="btn-primary">Add to calendar</button>
+        </div>
+        <p id="add-event-status" class="add-event-status"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="themes.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

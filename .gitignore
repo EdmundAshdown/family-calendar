@@ -1,0 +1,7 @@
+server_config.py
+token_store.json
+__pycache__/
+*.pyc
+.venv/
+chrome-kiosk-profile/
+*.zip
