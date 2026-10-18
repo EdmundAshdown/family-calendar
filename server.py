@@ -20,6 +20,7 @@ Then open http://localhost:5000.
 """
 
 import json
+import os
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -27,7 +28,20 @@ from urllib.parse import urlencode
 import requests
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
-import server_config as cfg
+try:
+    import server_config as cfg
+except ModuleNotFoundError:
+    # A bare ModuleNotFoundError here points at the import line and says
+    # nothing useful about what to do, which is a poor first experience for
+    # anyone who has just cloned the repo. server_config.py is gitignored
+    # because it holds a real secret, so it never arrives with the clone.
+    raise SystemExit(
+        "\nserver_config.py is missing.\n\n"
+        "Family Board keeps your Google Client ID and Client Secret in that\n"
+        "file, which is deliberately not in the repo. To create it:\n\n"
+        "    cp server_config.example.py server_config.py\n\n"
+        "then fill in CLIENT_ID and CLIENT_SECRET — see README steps 2 and 3.\n"
+    ) from None
 
 BASE_DIR = Path(__file__).parent
 PUBLIC_DIR = BASE_DIR / "public"
@@ -37,7 +51,31 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPES = "https://www.googleapis.com/auth/calendar"
 
+# Every /api/* route requires this header. It isn't a secret — it's served
+# in app.js to anyone who loads the page — and it isn't meant to be one.
+# Its only job is CSRF: a custom header cannot be set on a cross-origin
+# request without a CORS preflight first, and the check below refuses the
+# preflight, so another page open in the kiosk's browser can no longer POST
+# /api/logout and sign the whole family out.
+API_HEADER = "X-Family-Board"
+API_HEADER_VALUE = "family-board"
+
 app = Flask(__name__, static_folder=None)
+
+
+@app.before_request
+def require_same_origin():
+    """Reject /api/* requests that didn't come with our header.
+
+    A cross-origin fetch carrying a custom header is not a "simple request",
+    so the browser must send an OPTIONS preflight — which lands here, fails
+    this check, and stops the real request from ever being sent.
+    """
+    if not request.path.startswith("/api/"):
+        return None
+    if request.headers.get(API_HEADER) != API_HEADER_VALUE:
+        return jsonify({"error": "forbidden"}), 403
+    return None
 
 
 # ---------------------------------------------------------------------
@@ -54,16 +92,43 @@ LEGACY_KEY = "__legacy__"
 
 
 def load_store():
+    """Load the email -> token map, treating a missing or unreadable file
+    as "nobody is signed in yet".
+
+    This used to be a bare json.loads, so a file left truncated by a crash
+    mid-write raised on *every* /api/tokens call — the board went
+    permanently blank and the only fix was hand-deleting a file the owner
+    had no reason to know existed. Making everyone sign in again is
+    always the better failure than a board that never syncs again.
+    """
     if not TOKEN_FILE.exists():
         return {}
-    data = json.loads(TOKEN_FILE.read_text())
+    try:
+        data = json.loads(TOKEN_FILE.read_text())
+    except (ValueError, OSError) as err:
+        print(f"token_store.json is unreadable ({err}) — treating every account as signed out.")
+        return {}
+    if not isinstance(data, dict):
+        print("token_store.json is not an object — treating every account as signed out.")
+        return {}
     if "access_token" in data:  # old single-account format
         return {LEGACY_KEY: data}
     return data
 
 
 def save_store(store):
-    TOKEN_FILE.write_text(json.dumps(store))
+    """Write the token store atomically, and privately.
+
+    Two things matter here. Atomicity: this file is rewritten on every token
+    refresh, and a crash partway through a truncating write would lose every
+    account's refresh token — which costs every family member a fresh
+    consent screen. Privacy: it holds long-lived refresh tokens, so it is
+    chmod 0600 rather than the default umask's world-readable 0644.
+    """
+    tmp = TOKEN_FILE.with_name(TOKEN_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(store))
+    os.chmod(tmp, 0o600)
+    tmp.replace(TOKEN_FILE)  # atomic on the same filesystem, POSIX and Windows alike
 
 
 def refresh_access_token(entry):
@@ -246,4 +311,18 @@ def logout():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # Loopback by default, deliberately. /api/tokens is otherwise
+    # unauthenticated and hands out a currently-valid Google access token
+    # for *every* signed-in family account, so binding 0.0.0.0 would let
+    # anyone on the same wifi read every family member's calendar with:
+    #
+    #     curl http://<this-machine>:5000/api/tokens
+    #
+    # The kiosk only ever needs localhost, so that is what it gets. Set
+    # HOST = "0.0.0.0" in server_config.py if a second display on the
+    # network genuinely needs this server.
+    app.run(
+        host=getattr(cfg, "HOST", "127.0.0.1"),
+        port=getattr(cfg, "PORT", 5000),
+        debug=False,
+    )

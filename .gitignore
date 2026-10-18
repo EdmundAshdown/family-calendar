@@ -1,7 +1,10 @@
 server_config.py
+# (server_config.example.py is deliberately NOT ignored — it ships with the repo)
 token_store.json
+token_store.json.tmp
 __pycache__/
 *.pyc
 .venv/
+node_modules/
 chrome-kiosk-profile/
 *.zip

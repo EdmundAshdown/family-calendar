@@ -9,10 +9,14 @@ indefinitely — no repeated logins.
 - `public/index.html` — page structure
 - `public/style.css` — layout and component styling (colors come from `themes.js` at runtime)
 - `public/app.js` — event fetching/rendering, add-event form, theme/calendar pickers
+- `public/calendar-dates.js` — all the date and month-grid maths, with no DOM access, so it can be unit-tested on its own
+- `public/calendar-visibility.js` — which calendars the board shows; also DOM-free and unit-tested
 - `public/themes.js` — the 8 built-in color themes, picked from the **Theme** button
 - `public/config.js` — display settings (poll interval)
 - `server.py` — the Flask server: serves the files above, and owns the Google OAuth flow
 - `server_config.py` — **the only file with secrets in it** — Client ID, Client Secret, redirect URI (never commit this)
+- `server_config.example.py` — the template for the above; copy it and fill it in
+- `tests/` — unit tests for `calendar-dates.js` and `calendar-visibility.js` (`npm test`, no dependencies)
 - `requirements.txt` — Python dependencies (`pip install -r requirements.txt`)
 
 ## Why there's a server — and why multiple accounts
@@ -49,7 +53,7 @@ which account needs to sign in again.
 ## 1. Install Python dependencies
 
 ```
-cd family-board
+cd family-calendar
 pip install -r requirements.txt
 ```
 
@@ -68,14 +72,29 @@ secret too:
 
 ## 3. Fill in server_config.py
 
-Open `server_config.py` and paste in:
+```
+cp server_config.example.py server_config.py
+```
+
+Then open `server_config.py` and paste in:
 - `CLIENT_ID` (same one as before)
 - `CLIENT_SECRET` (from step 2)
 - `REDIRECT_URI` should already match — leave it as
   `http://localhost:5000/oauth2callback` unless you changed the port
 
 This file is in `.gitignore` — it never gets committed, since it holds
-a real secret unlike `config.js`.
+a real secret unlike `config.js`. That is also why the repo ships
+`server_config.example.py` instead: the repo itself contains no secrets,
+so nothing starts until you make one. If you forget, `python server.py`
+says exactly that rather than throwing a traceback.
+
+`server_config.py` takes two optional settings as well, both commented
+out because the defaults are the safe ones. `HOST` defaults to
+`127.0.0.1`, so the server is reachable **only from this machine** — and
+that matters, because `/api/tokens` needs no credentials and hands back a
+live Google access token for every signed-in account. Only set `HOST` to
+`0.0.0.0` if a second display on your network genuinely needs this server,
+and read the comment next to it first.
 
 ## 4. Run it
 
@@ -151,7 +170,7 @@ using `stop-kiosk.bat` or Task Manager instead of closing a window.
   interact with sign-in. After that, Flask renews the access token
   server-side, transparently, whenever the dashboard asks for one.
 - If Google access is ever revoked (e.g. from your Google Account's
-  "Third-party access" security settings), `/api/token` starts
+  "Third-party access" security settings), `/api/tokens` starts
   returning 401, the dashboard falls back to the sign-in screen, and a
   single click on `/login` fixes it — same recovery path as before, it
   should just be needed far less often now.
@@ -169,13 +188,38 @@ per-device (`localStorage`), same as calendar visibility.
 Want to tweak one, or add your own? Open `public/themes.js` — each
 theme is just a set of hex values.
 
-## Known rough edges (v1)
+## Tests
 
-- No event editing or deleting from the dashboard — only adding. Use
-  the Google Calendar app on a phone for edits/deletes for now.
-- Navigating to a past/future month with the ‹ › buttons sticks until
-  someone clicks "Today" or the page reloads.
+```
+npm test
+```
+
+Runs the unit tests for `public/calendar-dates.js` (the date and month-grid
+maths) and `public/calendar-visibility.js` (which calendars the board
+shows), using Node's built-in test runner, so there is nothing to install
+and no build step. Node 18 or newer.
+
+Both files are deliberately free of DOM and network access so they can be
+tested directly. Neither split is an aesthetic choice — each one is where a
+real bug lived:
+
+- `calendar-dates.js`: the date formatter used `toISOString()`, which
+  converts to UTC first, so an event at 9pm opened in the edit form dated
+  *tomorrow* and saving it moved the event a day.
+- `calendar-visibility.js`: the picker stored the *visible* calendar list,
+  so the first time anyone ticked a box, a calendar added later was
+  invisible with nothing on screen to explain it.
+
+## Known rough edges
+
+- Recurring events can be edited, but only the single instance you
+  clicked — the board doesn't offer "this and following" or "all
+  events".
+- Every sync re-downloads the whole visible month for every calendar on
+  every signed-in account. Fine for a couple of phones, but it is the
+  first thing to look at if a Pi ever feels warm.
 - `token_store.json` (created automatically after your first sign-in)
-  holds a real refresh token in plain text on disk. Fine for a
-  single-user home kiosk with normal OS file permissions, but don't
-  copy this file anywhere you wouldn't put a password.
+  holds a real refresh token per family member in plain text on disk. It
+  is written `chmod 0600`, and it is the only copy — back it up if you'd
+  rather not re-consent every account, and don't copy it anywhere you
+  wouldn't put a password.

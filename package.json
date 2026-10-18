@@ -1,0 +1,9 @@
+{
+  "name": "family-board",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Family Board — a Google Calendar wall display for a TV, with a local Flask server owning the OAuth flow.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

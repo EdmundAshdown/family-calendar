@@ -13,32 +13,58 @@ let accounts = []; // [{email, access_token}] — every signed-in Google account
 let tokenByEmail = {}; // email -> access_token, rebuilt on every sync
 let pollTimer = null;
 let latestEvents = []; // cached, so toggling calendar visibility doesn't need a refetch
-let currentMonthDate = new Date(); // which month is currently displayed
+let currentMonthDate = new Date(); // which month the person has navigated to
+let displayedMonth = null; // the month the heading and grid on screen actually agree on
 let calendarList = []; // merged + deduped across all signed-in accounts
 
 const el = (id) => document.getElementById(id);
 
+// Sent on every /api/* request. This is not a secret — it is in a file the
+// browser serves to anyone who asks. What it does buy is CSRF resistance:
+// a cross-origin page cannot set a custom header without triggering a CORS
+// preflight, and server.py refuses the preflight. So another site open in
+// this browser can no longer POST /api/logout and sign the family out.
+const API_HEADERS = { "X-Family-Board": "family-board" };
+
 // ---------------------------------------------------------------------
 // Calendar visibility (persisted locally per device)
+//
+// The persisted value is the list of HIDDEN calendars, not the visible
+// ones, so that a calendar appearing later shows up on its own. The rules
+// live in calendar-visibility.js; these are the localStorage wrappers.
 // ---------------------------------------------------------------------
 
-const VISIBILITY_KEY = "familyBoard.visibleCalendars";
+function getHiddenCalendarIds() {
+  const stored = localStorage.getItem(HIDDEN_CALENDARS_KEY);
+  if (stored !== null) return new Set(hiddenIdsFromStored(stored));
 
-function getVisibleCalendarIds() {
-  const stored = localStorage.getItem(VISIBILITY_KEY);
-  if (stored === null) {
-    // Default: everything visible.
-    return new Set(calendarList.map((c) => c.id));
-  }
-  try {
-    return new Set(JSON.parse(stored));
-  } catch {
-    return new Set(calendarList.map((c) => c.id));
-  }
+  // No hidden list yet. If this device has pre-2026-10-18 choices under the
+  // old "visible calendars" key, convert them once so nobody's existing
+  // selection is silently thrown away.
+  const legacy = localStorage.getItem(LEGACY_VISIBLE_CALENDARS_KEY);
+  if (legacy === null) return new Set();
+
+  // The conversion is the complement of the old list, which needs the
+  // calendar list to compute. If it isn't loaded yet, leave the legacy key
+  // where it is and convert on a later call rather than guessing — guessing
+  // would either hide every calendar or discard the family's choices.
+  if (calendarList.length === 0) return new Set();
+
+  const hidden = hiddenIdsFromLegacy(legacy, calendarList.map((c) => c.id));
+  localStorage.setItem(HIDDEN_CALENDARS_KEY, JSON.stringify(hidden));
+  localStorage.removeItem(LEGACY_VISIBLE_CALENDARS_KEY);
+  return new Set(hidden);
 }
 
+function getVisibleCalendarIds() {
+  return new Set(visibleIdsFrom(calendarList.map((c) => c.id), getHiddenCalendarIds()));
+}
+
+// Callers pass the calendars that should be visible — that is what the
+// picker and the legend reason about. What gets written is its complement.
 function setVisibleCalendarIds(idSet) {
-  localStorage.setItem(VISIBILITY_KEY, JSON.stringify([...idSet]));
+  const hidden = hiddenIdsFor(calendarList.map((c) => c.id), [...idSet]);
+  localStorage.setItem(HIDDEN_CALENDARS_KEY, JSON.stringify(hidden));
 }
 
 // ---------------------------------------------------------------------
@@ -210,7 +236,10 @@ function renderAccountsList() {
       const email = btn.dataset.signoutEmail;
       if (!confirm(`Sign ${email} out of the board? Their calendars will disappear until they sign in again.`)) return;
       try {
-        await fetch(`/api/logout?email=${encodeURIComponent(email)}`, { method: "POST" });
+        await fetch(`/api/logout?email=${encodeURIComponent(email)}`, {
+          method: "POST",
+          headers: API_HEADERS,
+        });
       } catch (err) {
         console.error("Sign-out failed:", err);
         return;
@@ -303,7 +332,7 @@ async function init() {
 // lists accounts whose refresh token has died and need a re-sign-in.
 async function getAccounts() {
   try {
-    const res = await fetch("/api/tokens");
+    const res = await fetch("/api/tokens", { headers: API_HEADERS });
     const data = await res.json().catch(() => ({}));
     return { accounts: data.accounts || [], stale: data.stale || [] };
   } catch (err) {
@@ -344,6 +373,11 @@ async function onSignedIn() {
   }
 
   populateCalendarSelect();
+  // Paint the heading for the current month before the first fetch, so a
+  // failed first sync leaves an empty board for the right month rather
+  // than no month at all. loadMonth redraws it once events arrive.
+  displayedMonth = getMonthStart(currentMonthDate);
+  renderMonthHeading(displayedMonth);
   loadMonth();
   schedulePolling();
 }
@@ -448,31 +482,13 @@ function schedulePolling() {
 // Fetching + rendering the month
 // ---------------------------------------------------------------------
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+// DAY_NAMES, MS_PER_DAY, toIsoDate, getMonthStart/getGridStart/getGridEnd,
+// parseEventBounds, isSameLocalDay and eventOverlapsDay now live in
+// calendar-dates.js, which has no DOM or network access so the date logic
+// can be unit-tested directly — see tests/calendar-dates.test.js.
 
 function renderDayNamesHeader() {
   el("month-daynames").innerHTML = DAY_NAMES.map((n) => `<div>${n}</div>`).join("");
-}
-
-function getMonthStart(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-// The grid always shows complete weeks, so it starts on the Sunday on or
-// before the 1st of the month, and ends on the Saturday on or after the
-// month's last day.
-function getGridStart(monthStart) {
-  const d = new Date(monthStart);
-  d.setDate(d.getDate() - d.getDay());
-  return d;
-}
-
-function getGridEnd(monthStart) {
-  const lastOfMonth = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
-  const d = new Date(lastOfMonth);
-  d.setDate(d.getDate() + (6 - d.getDay()) + 1); // +1 to make it an exclusive end
-  return d;
 }
 
 el("prev-month-btn").addEventListener("click", () => {
@@ -490,14 +506,16 @@ el("today-btn").addEventListener("click", () => {
   loadMonth();
 });
 
+function renderMonthHeading(monthStart) {
+  el("month-range").textContent = monthStart.toLocaleDateString(undefined, { month: "long" });
+  el("year-subtitle").textContent = `Family Board · ${monthStart.getFullYear()}`;
+  el("month-numeral").textContent = String(monthStart.getMonth() + 1).padStart(2, "0");
+}
+
 async function loadMonth() {
   const monthStart = getMonthStart(currentMonthDate);
   const gridStart = getGridStart(monthStart);
   const gridEnd = getGridEnd(monthStart);
-
-  el("month-range").textContent = monthStart.toLocaleDateString(undefined, { month: "long" });
-  el("year-subtitle").textContent = `Family Board · ${monthStart.getFullYear()}`;
-  el("month-numeral").textContent = String(monthStart.getMonth() + 1).padStart(2, "0");
 
   setSyncStatus("Syncing…");
 
@@ -512,21 +530,44 @@ async function loadMonth() {
   applyAccounts(result);
 
   try {
-    const events = await fetchAllCalendars(gridStart, gridEnd);
+    const { events, failed } = await fetchAllCalendars(gridStart, gridEnd);
     latestEvents = events;
+
+    // The heading and the grid are moved in the same breath, and only once
+    // the events are in hand. The heading used to be updated *before* the
+    // network calls, so any failed sync left it describing a month the
+    // grid was not showing — the board looked frozen rather than broken.
+    renderMonthHeading(monthStart);
+    displayedMonth = monthStart;
     renderMonth(events);
 
     let status = `Last synced ${new Date().toLocaleTimeString()}`;
+    if (failed > 0) {
+      // Some calendars loaded and some didn't, so the board is showing
+      // less than the family actually has. Say so.
+      status += ` — ${failed} calendar${failed === 1 ? "" : "s"} couldn't be loaded`;
+    }
     if (staleAccounts.length > 0) {
       status += ` — ${staleAccounts.join(", ")} needs to sign in again (Calendars → Add Google account)`;
     }
     setSyncStatus(status);
   } catch (err) {
     console.error(err);
+
+    // Nothing was drawn, so put navigation back on the month that is
+    // actually on screen. Without this, currentMonthDate would be left
+    // pointing at a month we never loaded, and the next calendar
+    // visibility toggle (which re-renders from currentMonthDate) would
+    // silently swap the grid to it underneath the old heading.
+    if (displayedMonth) currentMonthDate = new Date(displayedMonth);
+
     if (err.status === 401) {
       showSignInRequired("Session expired — please sign in again.");
     } else {
-      setSyncStatus("Sync failed — will retry.");
+      // The last month that did load stays on screen, so the board is
+      // never silently empty. Say plainly what happened instead.
+      const shown = monthStart.toLocaleDateString(undefined, { month: "long" });
+      setSyncStatus(`Couldn't load ${shown} — will retry.`);
     }
   }
 }
@@ -535,6 +576,10 @@ async function loadMonth() {
 // it was discovered under — and tags each event with which calendar (and
 // color) it came from, so the picker can filter and the chips can be
 // color-coded without re-fetching.
+//
+// Returns { events, failed }. `failed` is how many calendars came back
+// broken, so the caller can say so rather than presenting a partial board
+// as a complete one.
 async function fetchAllCalendars(timeMin, timeMax) {
   const settled = await Promise.allSettled(
     calendarList.map(async (cal) => {
@@ -543,35 +588,45 @@ async function fetchAllCalendars(timeMin, timeMax) {
     })
   );
 
+  const failures = settled.filter((r) => r.status === "rejected");
+  const successes = settled.filter((r) => r.status === "fulfilled");
+
   // A 401 means a token died mid-cycle (rare — Flask refreshes them every
   // sync). Surface it distinctly so the caller can force a re-sign-in
   // instead of quietly rendering an incomplete board.
-  const authFailure = settled.find(
-    (r) => r.status === "rejected" && r.reason && r.reason.status === 401
-  );
+  const authFailure = failures.find((r) => r.reason && r.reason.status === 401);
   if (authFailure) {
     const err = new Error("Authentication expired");
     err.status = 401;
     throw err;
   }
 
-  const all = settled.flatMap((r) => {
-    if (r.status === "fulfilled") return r.value;
-    console.error("Failed to fetch a calendar:", r.reason); // one bad calendar shouldn't break the whole board
-    return [];
-  });
+  // If *every* calendar failed, do not quietly return an empty list. That
+  // rendered a blank month with a cheerful "Last synced" underneath it —
+  // so a wifi outage looked exactly like a family with nothing on that
+  // week, which is the one thing a calendar on the wall must never do.
+  // Throwing instead leaves the last good month on screen and says so.
+  if (settled.length > 0 && successes.length === 0) {
+    throw failures[0].reason || new Error("Every calendar failed to load");
+  }
+
+  failures.forEach((r) => console.error("Failed to fetch a calendar:", r.reason)); // one bad calendar shouldn't break the whole board
+
+  const all = successes.flatMap((r) => r.value);
 
   // With multiple accounts, the same event often appears on more than one
   // calendar (an invite Jamie sent Edmund lives on both of their
   // calendars, with the same event ID). Keep only the first copy so it
   // doesn't render twice on the board.
   const seen = new Set();
-  return all.filter((ev) => {
+  const events = all.filter((ev) => {
     if (!ev.id) return true;
     if (seen.has(ev.id)) return false;
     seen.add(ev.id);
     return true;
   });
+
+  return { events, failed: failures.length };
 }
 
 async function fetchEvents(cal, timeMin, timeMax) {
@@ -693,10 +748,6 @@ function renderMonth(events) {
   grid.appendChild(finalDivider);
 }
 
-function toIsoDate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
 const LEGEND_LABEL_MAX_LENGTH = 16;
 
 function truncateLabel(label, maxLength = LEGEND_LABEL_MAX_LENGTH) {
@@ -797,42 +848,9 @@ function formatTime(dateTimeStr) {
   });
 }
 
-// Timed events (start.dateTime/end.dateTime) include a real UTC offset, so
-// the normal Date constructor resolves them correctly. All-day events
-// (start.date/end.date) are bare "YYYY-MM-DD" strings with no time or
-// offset — JavaScript's Date constructor treats those as UTC midnight,
-// which lands on the *previous* calendar day once read back in any
-// negative-UTC-offset timezone (i.e. anywhere in the US). Parsing the
-// numbers directly and building local-midnight Dates avoids that.
-function parseEventBounds(ev) {
-  if (ev.start.dateTime) {
-    return { start: new Date(ev.start.dateTime), end: new Date(ev.end.dateTime) };
-  }
-  const [sy, sm, sd] = ev.start.date.split("-").map(Number);
-  const [ey, em, ed] = ev.end.date.split("-").map(Number);
-  return {
-    start: new Date(sy, sm - 1, sd),
-    // Google's all-day end.date is already exclusive (the day after the
-    // event actually ends), which is exactly what we want for a range
-    // check below.
-    end: new Date(ey, em - 1, ed),
-  };
-}
-
-function isSameLocalDay(a, b) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-// True if `day` (a local-midnight Date) falls anywhere within the event's
-// span — not just on its start date. This is what makes multi-day events
-// (a hotel stay, a multi-day trip Gmail auto-added, etc.) show up on
-// every day they cover instead of disappearing after the first one.
-function eventOverlapsDay(ev, day) {
-  const { start, end } = parseEventBounds(ev);
-  const dayEnd = new Date(day);
-  dayEnd.setDate(dayEnd.getDate() + 1);
-  return start < dayEnd && end > day;
-}
+// parseEventBounds, isSameLocalDay and eventOverlapsDay live in
+// calendar-dates.js (loaded before this file) along with the reasoning
+// about UTC-midnight parsing — see the comment at the top of that file.
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -854,7 +872,9 @@ let editingEvent = null;
 
 el("add-event-btn").addEventListener("click", () => {
   resetToAddMode();
-  el("ev-date").value = new Date().toISOString().slice(0, 10);
+  // toIsoDate, not toISOString — see calendar-dates.js. In the evening the
+  // UTC-based version prefilled tomorrow's date.
+  el("ev-date").value = toIsoDate(new Date());
   el("add-event-overlay").classList.remove("hidden");
 });
 
@@ -930,10 +950,11 @@ function buildEventBodyFromForm() {
   const body = { summary: title };
 
   if (allDay) {
-    const end = new Date(date);
-    end.setDate(end.getDate() + 1);
+    // Google's all-day end.date is exclusive, so a one-day event ends the
+    // next day. Built locally and read back locally — the previous version
+    // round-tripped this through UTC, which worked only by coincidence.
     body.start = { date };
-    body.end = { date: end.toISOString().slice(0, 10) };
+    body.end = { date: allDayEndDate(date) };
   } else {
     const start = el("ev-start").value;
     const end = el("ev-end").value;
