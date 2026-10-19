@@ -69,6 +69,13 @@ secret too:
 4. Add a new **Authorized redirect URI**: `http://localhost:5000/oauth2callback`
    (this is different from the JavaScript origin you added before —
    redirect URIs are a separate list on the same page)
+5. **Set the publishing status to "In production"** — Google Auth
+   Platform → **Audience** → **Publish app**, then click through the
+   "unverified app" prompt. Leave it unverified; that is the intended
+   state. **Don't skip this.** If the project stays in **Testing**,
+   Google expires every refresh token after **7 days** and the board
+   signs everyone out weekly — which defeats the entire reason it has a
+   server.
 
 ## 3. Fill in server_config.py
 
@@ -109,10 +116,18 @@ confirm it doesn't ask again.
 
 A couple of things worth knowing:
 
-- Since the app is still in Testing mode in Google Cloud Console, only
-  accounts added as test users can sign in.
+- **The publishing status is not cosmetic, and "Testing" is a trap.**
+  Google issues **7-day** refresh tokens to any project whose consent
+  screen is **external** and still in **"Testing"** — unless the only
+  scopes requested are `name`, `email` and profile. This app asks for
+  the restricted `https://www.googleapis.com/auth/calendar` scope, so a
+  Testing-mode project signs every family member out every week, quietly.
+  Publish the app (step 2) and leave it unverified.
+- In **Testing** mode only accounts on the test-user list can sign in.
+  Once published, any Google account can — so publishing means the
+  test-user list is no longer your access control.
 - You'll see Google's "unverified app" warning the first time — click
-  **Advanced** → **Go to (your app name)**. Expected and fine for
+  **Advanced** → **Go to (your app name)**. Expected, and fine for
   personal use.
 - The `prompt: consent` in the login flow means every fresh `/login`
   re-issues a refresh token, so re-authorizing (e.g. after revoking
@@ -220,6 +235,10 @@ real bug lived:
   first thing to look at if a Pi ever feels warm.
 - `token_store.json` (created automatically after your first sign-in)
   holds a real refresh token per family member in plain text on disk. It
-  is written `chmod 0600`, and it is the only copy — back it up if you'd
-  rather not re-consent every account, and don't copy it anywhere you
-  wouldn't put a password.
+  is written `chmod 0600` — **on Unix.** On Windows `os.chmod` honours
+  only the read-only flag, so the file keeps whatever ACL it inherits;
+  under a user profile that means the account (plus SYSTEM and
+  Administrators), which is reasonable, but it is not what `0600` would
+  give you. It is the only copy — back it up if you'd rather not
+  re-consent every account, and don't copy it anywhere you wouldn't put
+  a password.

@@ -124,6 +124,14 @@ def save_store(store):
     account's refresh token — which costs every family member a fresh
     consent screen. Privacy: it holds long-lived refresh tokens, so it is
     chmod 0600 rather than the default umask's world-readable 0644.
+
+    Caveat, because the board runs on Windows: os.chmod there honours only
+    the read-only flag (stat.S_IWRITE) and silently ignores the permission
+    bits, so 0o600 is effectively a no-op and the file keeps whatever ACL it
+    inherits — under a user profile, the account plus SYSTEM and
+    Administrators. That is reasonable on a single-account machine, but it
+    is not the guarantee 0600 gives on Unix. Restricting it properly on
+    Windows would need icacls.
     """
     tmp = TOKEN_FILE.with_name(TOKEN_FILE.name + ".tmp")
     tmp.write_text(json.dumps(store))
