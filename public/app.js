@@ -16,6 +16,13 @@ let latestEvents = []; // cached, so toggling calendar visibility doesn't need a
 let currentMonthDate = new Date(); // which month the person has navigated to
 let displayedMonth = null; // the month the heading and grid on screen actually agree on
 let calendarList = []; // merged + deduped across all signed-in accounts
+let clockTimer = null; // ticks the clock, and keeps today's cell honest
+let todaySignature = null; // what today's cell last drew, so time passing need not redraw the grid
+
+// How many events a day cell shows inline — one beside the date number and
+// two stacked below it. Which three it chooses is selectInlineEvents in
+// calendar-dates.js, and for today that choice depends on the clock.
+const MAX_INLINE_EVENTS = 3;
 
 const el = (id) => document.getElementById(id);
 
@@ -183,6 +190,10 @@ function startRenamingCalendar(calId) {
       commit();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      // Cancel the rename *without* letting the press carry on to the
+      // document listener that dismisses overlays — otherwise Escape would
+      // both abandon the rename and close the whole Calendars panel.
+      e.stopPropagation();
       renderCalendarsPicker(); // discard, no changes
     }
   });
@@ -378,6 +389,7 @@ async function onSignedIn() {
   // than no month at all. loadMonth redraws it once events arrive.
   displayedMonth = getMonthStart(currentMonthDate);
   renderMonthHeading(displayedMonth);
+  startClock();
   loadMonth();
   schedulePolling();
 }
@@ -467,6 +479,7 @@ function showSigninError(msg) {
 // "please sign in" state instead of a silently stale dashboard.
 function showSignInRequired(message) {
   if (pollTimer) clearInterval(pollTimer);
+  if (clockTimer) clearInterval(clockTimer);
   accounts = [];
   tokenByEmail = {};
   showSigninScreen();
@@ -619,14 +632,28 @@ async function fetchAllCalendars(timeMin, timeMax) {
   // calendars, with the same event ID). Keep only the first copy so it
   // doesn't render twice on the board.
   const seen = new Set();
-  const events = all.filter((ev) => {
+  const deduped = all.filter((ev) => {
     if (!ev.id) return true;
     if (seen.has(ev.id)) return false;
     seen.add(ev.id);
     return true;
   });
 
-  return { events, failed: failures.length };
+  // Finally, one chronological order across every calendar.
+  //
+  // `all` is grouped by calendar, because each calendar is fetched
+  // separately and the results are concatenated. A day cell shows only the
+  // first three of this list, so without the sort a single person's
+  // calendar could fill the cell while everyone else's day sat behind
+  // "+N more" — and the times on screen read shuffled, because the first
+  // chip was whichever calendar came first rather than the earliest event.
+  // See sortEventsByStart in calendar-dates.js.
+  //
+  // Deliberately after the dedupe, not before: the sort is stable and two
+  // copies of the same invite share a start time, so deduping first keeps
+  // exactly the copy — and therefore the colour — the board has always
+  // shown for it.
+  return { events: sortEventsByStart(deduped), failed: failures.length };
 }
 
 async function fetchEvents(cal, timeMin, timeMax) {
@@ -661,7 +688,12 @@ function renderMonth(events) {
   const grid = el("month-grid");
   grid.innerHTML = "";
 
-  const today = new Date();
+  // Captured once, so every cell in this render agrees on what "now" is.
+  // today's cell depends on it (see selectInlineEvents); the other days do
+  // not, which is the point of passing it in rather than reading the clock
+  // per cell.
+  const now = new Date();
+  const today = new Date(now);
   today.setHours(0, 0, 0, 0);
 
   const visible = getVisibleCalendarIds();
@@ -685,16 +717,18 @@ function renderMonth(events) {
       day.setDate(day.getDate() + (w * 7 + d));
 
       const dayEvents = visibleEvents.filter((ev) => eventOverlapsDay(ev, day));
+      const isToday = day.getTime() === today.getTime();
 
       const cell = document.createElement("div");
       cell.className = "day-cell";
       if (day.getMonth() !== monthStart.getMonth()) cell.classList.add("outside-month");
-      if (day.getTime() === today.getTime()) cell.classList.add("today");
+      if (isToday) cell.classList.add("today");
 
       const isAllDay = (ev) => !ev.start.dateTime;
       const dateIso = toIsoDate(day);
-      const MAX_TOTAL = 3; // 1 beside the date number + 2 stacked below
-      const visibleInline = dayEvents.slice(0, MAX_TOTAL);
+      // Today's three are chosen by time of day; every other day's are
+      // simply the earliest three. See selectInlineEvents.
+      const visibleInline = selectInlineEvents(dayEvents, MAX_INLINE_EVENTS, now, isToday);
       const [firstEvent, ...restEvents] = visibleInline;
       const overflowCount = dayEvents.length - visibleInline.length;
 
@@ -711,8 +745,6 @@ function renderMonth(events) {
           <span class="event-label">${showTime ? `<span class="event-time">${formatTime(ev.start.dateTime)}</span>` : ""}${title}</span>
         </div>`;
       };
-
-      const isToday = day.getTime() === today.getTime();
 
       cell.innerHTML = `
         <div class="day-top-row">
@@ -746,6 +778,67 @@ function renderMonth(events) {
   const finalDivider = document.createElement("div");
   finalDivider.className = "week-divider";
   grid.appendChild(finalDivider);
+
+  // Remember what today's cell ended up showing, so the clock's tick can
+  // tell whether the passage of time has actually changed it rather than
+  // redrawing the grid for nothing. It changes a handful of times a day.
+  todaySignature = todayInlineSignature(events, monthStart, now);
+}
+
+// ---------------------------------------------------------------------
+// The clock — and keeping "today" honest
+//
+// The clock is not decoration. Today's cell shows what is still to come
+// rather than the earliest events, which makes the grid a function of the
+// current time; without a tick, a board left running would still be
+// showing this morning's plan the next morning. The clock is also what
+// makes the cell readable — "next at 5pm" only means something if you can
+// see that it is half three.
+// ---------------------------------------------------------------------
+
+const CLOCK_TICK_MS = 5000; // fine enough that the displayed minute is never visibly stale
+
+function updateClock(now = new Date()) {
+  const node = el("board-clock");
+  if (!node) return;
+  const text = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (node.textContent !== text) node.textContent = text;
+}
+
+/* A fingerprint of what today's cell is currently showing.
+ *
+ * Compared on each tick: if it is unchanged, the time passing has not
+ * altered anything on screen and the grid is left alone. Only when an
+ * event starts or finishes — or the date rolls over — does it change.
+ */
+function todayInlineSignature(events, monthStart, now) {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+
+  // Today need not be in the *month* being shown to be on screen: the grid
+  // draws whole weeks, so the 1st can appear in the trailing days of the
+  // previous month's grid. Ask the grid's real bounds, not the month's.
+  if (today < getGridStart(monthStart) || today >= getGridEnd(monthStart)) return "";
+
+  const visible = getVisibleCalendarIds();
+  const dayEvents = events.filter((ev) => visible.has(ev._calendarId) && eventOverlapsDay(ev, today));
+  return selectInlineEvents(dayEvents, MAX_INLINE_EVENTS, now, true)
+    .map((ev) => ev.id || ev.summary || "?")
+    .join("|");
+}
+
+function startClock() {
+  updateClock();
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    const now = new Date();
+    updateClock(now);
+
+    // Nothing drawn yet (or signed out) — there is no cell to keep honest.
+    if (!displayedMonth) return;
+    const signature = todayInlineSignature(latestEvents, getMonthStart(currentMonthDate), now);
+    if (signature !== todaySignature) renderMonth(latestEvents);
+  }, CLOCK_TICK_MS);
 }
 
 const LEGEND_LABEL_MAX_LENGTH = 16;
@@ -1064,4 +1157,84 @@ el("delete-event-btn").addEventListener("click", async () => {
     console.error(err);
     statusEl.textContent = `Couldn't delete event: ${err.message}`;
   }
+});
+
+// ---------------------------------------------------------------------
+// Dismissing overlays
+//
+// Every overlay used to be closable only by finding its button. On a
+// touch TV the thing people actually try is tapping the dimmed area
+// outside the card, so that works now; Escape works too, for anyone with
+// a keyboard attached.
+//
+// The add-event form is the deliberate exception. Closing it throws away
+// whatever has been typed, so a stray tap outside an untouched form
+// dismisses it, but an entry in progress needs an explicit Cancel — the
+// board should not quietly lose an event to a mistimed tap.
+// ---------------------------------------------------------------------
+
+const OVERLAY_IDS = [
+  "day-detail-overlay",
+  "theme-overlay",
+  "calendars-overlay",
+  "add-event-overlay",
+];
+
+function isAddEventFormDirty() {
+  // Editing an existing event always requires a deliberate exit: there are
+  // loaded values to lose, and Cancel or Save are the honest ways out. A
+  // new event only counts as started once a title has been typed — it is
+  // a required field, so below that there is nothing worth keeping.
+  if (editingEvent) return true;
+  const title = el("ev-title");
+  return Boolean(title && title.value.trim());
+}
+
+function canDismissOverlay(id) {
+  if (id === "add-event-overlay") return !isAddEventFormDirty();
+  return true;
+}
+
+function dismissOverlay(id) {
+  if (id === "add-event-overlay") closeAddEvent();
+  else el(id).classList.add("hidden");
+}
+
+function topmostVisibleOverlayId() {
+  // Scanned in reverse because the list is in DOM order, so the last
+  // visible one is the one painted on top. In normal use only one overlay
+  // is ever open — the day-detail panel hides itself before the add-event
+  // form appears — but picking the topmost is the answer that stays
+  // correct if that ever stops being true.
+  for (let i = OVERLAY_IDS.length - 1; i >= 0; i -= 1) {
+    const id = OVERLAY_IDS[i];
+    if (!el(id).classList.contains("hidden")) return id;
+  }
+  return null;
+}
+
+for (const id of OVERLAY_IDS) {
+  const node = el(id);
+  if (!node) continue;
+
+  // Whether this press began on the dimmed backdrop rather than inside the
+  // card. Tracking the press as well as the click means a drag that starts
+  // on a selected line of text and finishes outside does not dismiss the
+  // panel — a text selection in the calendar list was otherwise closing it.
+  let pressedBackdrop = false;
+  node.addEventListener("pointerdown", (e) => {
+    pressedBackdrop = e.target === node;
+  });
+  node.addEventListener("click", (e) => {
+    if (e.target === node && pressedBackdrop && canDismissOverlay(id)) dismissOverlay(id);
+    pressedBackdrop = false;
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+
+  // Overlays are modal: normally only the visible one can be open.
+  const id = topmostVisibleOverlayId();
+  if (id && canDismissOverlay(id)) dismissOverlay(id);
 });

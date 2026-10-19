@@ -109,6 +109,72 @@ function allDayEndDate(isoDate) {
   return toIsoDate(end);
 }
 
+/* Ordering for the event chips inside a day cell.
+ *
+ * Google sorts events *within* one calendar (the fetch asks for
+ * orderBy=startTime), but the board then concatenates whole calendars
+ * together — so without this, a busy day renders as "all of calendar A's
+ * events, then calendar B's, then C's". The cell only shows the first
+ * three, which meant one person's day could fill the cell entirely while
+ * everyone else's sat behind "+N more" — and the times on screen looked
+ * shuffled, because the first chip was simply whichever calendar happened
+ * to be first rather than the earliest event.
+ *
+ * Sorting once, globally, makes the chips on screen the earliest three
+ * across the whole family.
+ *
+ * All-day events parse to local midnight, so they sort above timed events
+ * on the same day, which is the conventional order for a day cell. Ties
+ * break all-day-first and then alphabetically, purely so the result is
+ * deterministic rather than dependent on the order Google returned.
+ */
+function compareEventsByStart(a, b) {
+  const byStart = parseEventBounds(a).start - parseEventBounds(b).start;
+  if (byStart !== 0) return byStart;
+
+  const aAllDay = !a.start.dateTime;
+  const bAllDay = !b.start.dateTime;
+  if (aAllDay !== bAllDay) return aAllDay ? -1 : 1;
+
+  return String(a.summary || "").localeCompare(String(b.summary || ""));
+}
+
+// Returns a sorted copy — callers keep their own array untouched.
+function sortEventsByStart(events) {
+  return [...events].sort(compareEventsByStart);
+}
+
+/* Chooses which events a day cell shows inline. Assumes `dayEvents` is
+ * already in chronological order (see sortEventsByStart).
+ *
+ * For any day but today this is just the first `max`. Today is different,
+ * and it is the whole reason this is a function rather than a `.slice()`:
+ * a cell that always shows the *earliest* events spends the evening
+ * showing this morning's finished errands while the 5pm appointment hides
+ * behind "+N more". So today prefers what is still running or yet to
+ * come, and only falls back to recently-finished events to fill any
+ * remaining slots.
+ *
+ * That fallback is deliberate. Once the day is over there is nothing
+ * upcoming, and a cell that then rendered empty would look like the board
+ * had lost the events — the same "absent data presented as nothing" shape
+ * that the sync handling in app.js exists to prevent. Preferring the most
+ * recent finished events keeps the day visible.
+ *
+ * Because every fallback event ends before every upcoming one starts, the
+ * result stays in chronological order either way.
+ */
+function selectInlineEvents(dayEvents, max, now, isToday) {
+  if (!isToday || dayEvents.length <= max) return dayEvents.slice(0, max);
+
+  const upcoming = dayEvents.filter((ev) => parseEventBounds(ev).end > now);
+  if (upcoming.length >= max) return upcoming.slice(0, max);
+
+  const finished = dayEvents.filter((ev) => parseEventBounds(ev).end <= now);
+  const fill = finished.slice(-(max - upcoming.length));
+  return [...fill, ...upcoming];
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     DAY_NAMES,
@@ -122,5 +188,8 @@ if (typeof module !== "undefined" && module.exports) {
     isSameLocalDay,
     eventOverlapsDay,
     allDayEndDate,
+    compareEventsByStart,
+    sortEventsByStart,
+    selectInlineEvents,
   };
 }

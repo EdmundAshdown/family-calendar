@@ -184,6 +184,28 @@ h1, h2 {
   margin: 4px 0 0;
 }
 
+/* The time of day. It exists because today's cell shows what is still to
+   come rather than the earliest events, so "next at 5pm" only means
+   something alongside the current time — and because a board left running
+   has to tick for that cell to stay honest.
+
+   Tabular figures (where the theme's font has them) keep every digit the
+   same width. Even where it does not, nothing visibly shifts: the month
+   block and the button row are sized by their own content, so with
+   space-between the free space splits evenly and the clock's centre is
+   fixed no matter how wide the time string is. */
+.board-clock {
+  font-family: var(--heading-font);
+  font-weight: 600;
+  font-size: clamp(1.4rem, 2.6vw, 2.4rem);
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  white-space: nowrap;
+  padding-bottom: 0.3rem;
+}
+
 .header-actions {
   display: flex;
   gap: 10px;

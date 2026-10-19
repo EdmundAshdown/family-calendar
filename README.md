@@ -44,7 +44,10 @@ same as yours.
 When the same calendar is visible from multiple signed-in accounts, the
 board dedupes it, keeping the copy with the strongest access. Events
 that live on more than one person's calendar (invites between family
-members) are deduped too, so they only render once.
+members) are deduped too, so they only render once. What survives is then
+sorted into a single chronological order across every calendar, so the
+three events a day cell shows are the three earliest in the family rather
+than the first three belonging to whichever calendar was fetched first.
 
 If someone's sign-in ever expires or gets revoked, the board keeps
 working for everyone else and notes in the bottom-right status line
@@ -203,6 +206,31 @@ per-device (`localStorage`), same as calendar visibility.
 Want to tweak one, or add your own? Open `public/themes.js` — each
 theme is just a set of hex values.
 
+## Reading the grid
+
+- **A day cell shows three events.** Any day you are not on shows the
+  earliest three; the rest sit behind `+N more`. Tapping anywhere in a
+  day that has events opens the full list, which is also where you add
+  an event to that date or edit an existing one.
+- **Today's cell is deliberately time-aware.** Showing the earliest three
+  all day would mean that by the evening the board was still displaying
+  this morning's finished errands while the day's only remaining
+  appointment hid behind `+N more`. So today shows what is still running
+  or yet to come, and only falls back to the most recently finished
+  events to fill any leftover slots. It keeps the cell in time order
+  either way, and it means a day that has events never renders empty —
+  a cell showing nothing would be indistinguishable from one whose
+  events had failed to load.
+- **The clock in the header isn't decoration.** "Next at 5pm" only means
+  something next to the current time, and because today's cell depends on
+  the time, something has to tick — otherwise a board left running would
+  still be describing this morning the next morning. It redraws only when
+  an event actually starts or finishes, not on every tick.
+- **Dismissing a panel:** tap the dimmed area outside it, or press
+  Escape. The add-event form is the one exception: a stray tap closes an
+  untouched form, but an entry in progress needs the explicit Cancel
+  button, so a mistimed tap can't discard a half-typed event.
+
 ## Tests
 
 ```
@@ -224,6 +252,11 @@ real bug lived:
 - `calendar-visibility.js`: the picker stored the *visible* calendar list,
   so the first time anyone ticked a box, a calendar added later was
   invisible with nothing on screen to explain it.
+- `calendar-dates.js` also owns which events a day cell shows, and in
+  what order. The board fetches one calendar at a time and concatenates
+  the results, so without a global sort the three slots in a busy day
+  could be filled entirely by one person's calendar while everyone else's
+  day sat behind `+N more` — and the times on screen read shuffled.
 
 ## Known rough edges
 

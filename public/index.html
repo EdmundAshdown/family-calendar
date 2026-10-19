@@ -31,6 +31,11 @@
         <p id="year-subtitle" class="year-subtitle"></p>
       </div>
 
+      <!-- The clock is aria-hidden on purpose: it is supplementary, and a
+           value that changes every minute would otherwise interrupt a
+           screen reader continuously. The month heading is the content. -->
+      <time id="board-clock" class="board-clock" aria-hidden="true"></time>
+
       <div class="header-actions">
         <button id="prev-month-btn" class="btn-nav" aria-label="Previous month">‹</button>
         <button id="next-month-btn" class="btn-nav" aria-label="Next month">›</button>
@@ -57,7 +62,7 @@
 
   <!-- Day detail — full event list, shown when a day has more than fits inline -->
   <div id="day-detail-overlay" class="overlay hidden">
-    <div class="overlay-card">
+    <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="day-detail-heading">
       <h2 id="day-detail-heading"></h2>
       <div id="day-detail-list" class="day-detail-list">
         <!-- events injected by app.js -->
@@ -71,7 +76,7 @@
 
   <!-- Theme picker, hidden until opened -->
   <div id="theme-overlay" class="overlay hidden">
-    <div class="overlay-card">
+    <div class="overlay-card" role="dialog" aria-modal="true" aria-label="Theme">
       <h2>Theme</h2>
       <div id="theme-list" class="theme-list">
         <!-- swatches injected by app.js -->
@@ -84,7 +89,7 @@
 
   <!-- Calendar picker, hidden until opened -->
   <div id="calendars-overlay" class="overlay hidden">
-    <div class="overlay-card calendars-card">
+    <div class="overlay-card calendars-card" role="dialog" aria-modal="true" aria-label="Calendars">
       <h2>Calendars</h2>
       <div class="calendars-scroll">
         <div id="calendars-list" class="calendars-list">
@@ -104,7 +109,7 @@
 
   <!-- Add/edit event panel, hidden until opened -->
   <div id="add-event-overlay" class="overlay hidden">
-    <div class="overlay-card">
+    <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="add-event-heading">
       <h2 id="add-event-heading">Add event</h2>
       <form id="add-event-form">
         <label for="ev-title">Title</label>

@@ -27,6 +27,8 @@ const {
   isSameLocalDay,
   eventOverlapsDay,
   allDayEndDate,
+  sortEventsByStart,
+  selectInlineEvents,
 } = require("../public/calendar-dates.js");
 
 // ---------------------------------------------------------------------
@@ -243,5 +245,159 @@ test("what we write for an all-day event is what we read back", () => {
     assert.equal(eventOverlapsDay(ev, localDateFromIso(day)), true, `${day} should cover itself`);
     const next = new Date(localDateFromIso(day).getFullYear(), localDateFromIso(day).getMonth(), localDateFromIso(day).getDate() + 1);
     assert.equal(eventOverlapsDay(ev, next), false, `${day} should not spill into the next day`);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Ordering the chips inside a day cell
+//
+// Google sorts events within a single calendar, but the board concatenates
+// whole calendars together. A day cell only shows three, so without a
+// global sort one person's calendar could fill the cell while everyone
+// else's sat behind "+N more" — and the displayed times read shuffled,
+// because the first chip was whichever calendar came first in the list
+// rather than the earliest event.
+//
+// Everything below uses absolute (Z) offsets, so it means the same thing
+// wherever the suite runs.
+// ---------------------------------------------------------------------
+
+const timed = (summary, startIso, endIso) => ({
+  summary,
+  start: { dateTime: startIso },
+  end: { dateTime: endIso },
+});
+
+test("events from several calendars sort into one chronological order", () => {
+  // Input order here is calendar order, which is what fetchAllCalendars
+  // produces: all of A's events, then B's, then C's.
+  const byCalendar = [
+    timed("A: School run", "2026-10-18T09:00:00Z", "2026-10-18T09:30:00Z"),
+    timed("A: Dentist", "2026-10-18T11:30:00Z", "2026-10-18T12:00:00Z"),
+    timed("A: Swimming", "2026-10-18T14:00:00Z", "2026-10-18T15:00:00Z"),
+    timed("B: Doctor", "2026-10-18T08:00:00Z", "2026-10-18T08:45:00Z"),
+    timed("C: Football", "2026-10-18T18:00:00Z", "2026-10-18T19:30:00Z"),
+  ];
+
+  assert.deepEqual(
+    sortEventsByStart(byCalendar).map((e) => e.summary),
+    ["B: Doctor", "A: School run", "A: Dentist", "A: Swimming", "C: Football"]
+  );
+});
+
+test("sorting leaves the caller's array alone", () => {
+  const input = [
+    timed("later", "2026-10-18T14:00:00Z", "2026-10-18T15:00:00Z"),
+    timed("earlier", "2026-10-18T09:00:00Z", "2026-10-18T10:00:00Z"),
+  ];
+  const sorted = sortEventsByStart(input);
+
+  assert.equal(input[0].summary, "later", "the original array should be untouched");
+  assert.equal(sorted[0].summary, "earlier");
+});
+
+test("an all-day event sorts above a timed one on the same day", () => {
+  // All-day events parse to local midnight, so they land at the top of the
+  // day — the conventional place for a birthday or a trip marker.
+  withTimezone("America/New_York", () => {
+    const input = [
+      timed("9am meeting", "2026-10-18T09:00:00-04:00", "2026-10-18T10:00:00-04:00"),
+      allDayEvent("2026-10-18", "2026-10-19"),
+    ];
+    assert.equal(sortEventsByStart(input)[0].start.date, "2026-10-18");
+  });
+});
+
+test("events at the same instant order deterministically", () => {
+  // Otherwise the order would depend on which calendar Google answered
+  // first, which is exactly the instability this is here to remove.
+  const pair = [
+    timed("Zebra", "2026-10-18T09:00:00Z", "2026-10-18T09:30:00Z"),
+    timed("Apple", "2026-10-18T09:00:00Z", "2026-10-18T09:30:00Z"),
+  ];
+  const expected = ["Apple", "Zebra"];
+
+  assert.deepEqual(sortEventsByStart(pair).map((e) => e.summary), expected);
+  assert.deepEqual(sortEventsByStart([...pair].reverse()).map((e) => e.summary), expected);
+});
+
+// A day with more events than the cell can show.
+const busyDay = () => [
+  timed("08:00 gym", "2026-10-18T08:00:00Z", "2026-10-18T09:00:00Z"),
+  timed("10:00 call", "2026-10-18T10:00:00Z", "2026-10-18T11:00:00Z"),
+  timed("14:00 dentist", "2026-10-18T14:00:00Z", "2026-10-18T15:00:00Z"),
+  timed("17:00 football", "2026-10-18T17:00:00Z", "2026-10-18T18:00:00Z"),
+];
+
+test("a day that fits shows all of it", () => {
+  const two = busyDay().slice(0, 2);
+  const picked = selectInlineEvents(two, 3, new Date("2026-10-18T15:30:00Z"), true);
+  assert.equal(picked.length, 2);
+});
+
+test("any day but today just shows the earliest events", () => {
+  // Time is irrelevant for a day you are not on — a past or future day
+  // must not start hiding its morning because of the current clock.
+  const picked = selectInlineEvents(busyDay(), 3, new Date("2026-10-18T15:30:00Z"), false);
+  assert.deepEqual(picked.map((e) => e.summary), ["08:00 gym", "10:00 call", "14:00 dentist"]);
+});
+
+test("today keeps the evening visible instead of the morning's finished errands", () => {
+  // The bug this exists for: at half three, showing the *earliest* three
+  // would end the day displaying 8am, 10am and 2pm while the football at
+  // 5pm was the only thing left and sat behind "+1 more".
+  const picked = selectInlineEvents(busyDay(), 3, new Date("2026-10-18T15:30:00Z"), true);
+
+  assert.ok(
+    picked.some((e) => e.summary === "17:00 football"),
+    "the only remaining event of the day must be on screen"
+  );
+  assert.deepEqual(picked.map((e) => e.summary), ["10:00 call", "14:00 dentist", "17:00 football"]);
+});
+
+test("an event still in progress counts as not finished", () => {
+  const day = [
+    timed("08:00 gym", "2026-10-18T08:00:00Z", "2026-10-18T09:00:00Z"),
+    timed("10:00 call", "2026-10-18T10:00:00Z", "2026-10-18T11:00:00Z"),
+    timed("14:00 dentist", "2026-10-18T14:00:00Z", "2026-10-18T16:00:00Z"),
+    timed("17:00 football", "2026-10-18T17:00:00Z", "2026-10-18T18:00:00Z"),
+  ];
+  // At 3pm the dentist appointment is half over, so it stays on screen.
+  const picked = selectInlineEvents(day, 3, new Date("2026-10-18T15:00:00Z"), true);
+
+  assert.deepEqual(picked.map((e) => e.summary), ["10:00 call", "14:00 dentist", "17:00 football"]);
+});
+
+test("enough upcoming events fill the cell without any finished ones", () => {
+  const day = [
+    timed("08:00 gym", "2026-10-18T08:00:00Z", "2026-10-18T09:00:00Z"),
+    timed("10:00 call", "2026-10-18T10:00:00Z", "2026-10-18T11:00:00Z"),
+    timed("14:00 dentist", "2026-10-18T14:00:00Z", "2026-10-18T15:00:00Z"),
+    timed("16:00 piano", "2026-10-18T16:00:00Z", "2026-10-18T17:00:00Z"),
+    timed("17:00 football", "2026-10-18T17:00:00Z", "2026-10-18T18:00:00Z"),
+  ];
+  const picked = selectInlineEvents(day, 3, new Date("2026-10-18T09:30:00Z"), true);
+
+  assert.deepEqual(picked.map((e) => e.summary), ["10:00 call", "14:00 dentist", "16:00 piano"]);
+});
+
+test("a day that is over still shows its events, not an empty cell", () => {
+  // The failure mode this guards: at ten past midnight a cell that
+  // renders nothing looks identical to a cell whose events were lost.
+  const picked = selectInlineEvents(busyDay(), 3, new Date("2026-10-18T20:00:00Z"), true);
+
+  assert.equal(picked.length, 3, "a day with events must never render empty");
+  assert.deepEqual(picked.map((e) => e.summary), ["10:00 call", "14:00 dentist", "17:00 football"]);
+});
+
+test("today's selection is chronological whatever the time of day", () => {
+  const day = busyDay();
+  for (const hour of [6, 8, 9, 12, 15, 19, 22, 23]) {
+    const now = new Date(`2026-10-18T${String(hour).padStart(2, "0")}:30:00Z`);
+    const picked = selectInlineEvents(day, 3, now, true);
+    const starts = picked.map((e) => new Date(e.start.dateTime).getTime());
+
+    assert.deepEqual(starts, [...starts].sort((a, b) => a - b), `should be in time order at ${hour}:30`);
+    assert.equal(picked.length, 3, `should fill the cell at ${hour}:30`);
   }
 });
