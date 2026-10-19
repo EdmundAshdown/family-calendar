@@ -4,9 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Family Board</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&family=Caveat:wght@600;700&family=Poppins:wght@500;600;700&family=Cormorant+Garamond:wght@600;700&family=Oswald:wght@500;600;700&family=Syne:wght@600;700;800&family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="fonts.css">
 </head>
 <body>
 
@@ -147,9 +146,15 @@
     </div>
   </div>
 
+  <!-- Quiet-hours screen: near-black, just a dim clock. Shown overnight. -->
+  <div id="quiet-screen" class="quiet-screen" aria-hidden="true">
+    <time id="quiet-clock" class="quiet-clock" aria-hidden="true"></time>
+  </div>
+
   <script src="config.js"></script>
   <script src="calendar-dates.js"></script>
   <script src="calendar-visibility.js"></script>
+  <script src="quiet-hours.js"></script>
   <script src="themes.js"></script>
   <script src="app.js"></script>
 </body>

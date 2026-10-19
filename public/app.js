@@ -178,7 +178,7 @@ function startRenamingCalendar(calId) {
     if (newName && newName !== cal.label) {
       setCustomCalendarName(calId, newName);
       calendarList = applyCustomNames(calendarList);
-      populateCalendarSelect();
+      refreshWriteControls();
       renderMonth(latestEvents); // refreshes the legend too
     }
     renderCalendarsPicker(); // re-render either way, to exit edit mode
@@ -204,17 +204,40 @@ function findCalendarRow(calId) {
   return document.querySelector(`.calendar-row[data-cal-row="${CSS.escape(calId)}"]`);
 }
 
-function populateCalendarSelect() {
+function refreshWriteControls() {
   const writable = calendarList.filter((c) => c.canWrite);
   el("ev-calendar").innerHTML = writable
     .map((cal) => `<option value="${escapeHtml(cal.id)}">${escapeHtml(cal.label)}</option>`)
     .join("");
+
+  // With nothing writeable the form used to submit an empty calendar id and
+  // fail at the far end of a round trip, which read as the board being broken.
+  // Close the two doors into that form instead. The explanation goes on the
+  // buttons themselves; the likelier cause — the calendar list not having
+  // loaded — is already reported by the sync status line.
+  const blocked = writable.length === 0;
+  const reason = blocked
+    ? calendarList.length === 0
+      ? "Calendars haven't loaded yet."
+      : "None of these calendars allow adding events."
+    : null;
+  for (const id of ["add-event-btn", "day-detail-add-btn"]) {
+    const btn = el(id);
+    btn.disabled = blocked;
+    if (reason) {
+      btn.title = reason;
+      btn.setAttribute("aria-label", `${btn.textContent.trim()} — ${reason}`);
+    } else {
+      btn.removeAttribute("title");
+      btn.removeAttribute("aria-label");
+    }
+  }
 }
 
 el("calendars-btn").addEventListener("click", () => {
   renderCalendarsPicker();
   renderAccountsList();
-  el("calendars-overlay").classList.remove("hidden");
+  openOverlay("calendars-overlay");
 });
 
 function renderAccountsList() {
@@ -258,13 +281,13 @@ function renderAccountsList() {
       // Rebuild everything from the remaining accounts.
       const result = await getAccounts();
       if (result.accounts.length === 0) {
-        el("calendars-overlay").classList.add("hidden");
+        closeOverlay("calendars-overlay");
         showSignInRequired("Signed out.");
         return;
       }
       applyAccounts(result);
       calendarList = await fetchCalendarLists();
-      populateCalendarSelect();
+      refreshWriteControls();
       renderCalendarsPicker();
       renderAccountsList();
       loadMonth();
@@ -273,7 +296,7 @@ function renderAccountsList() {
 }
 
 el("close-calendars-btn").addEventListener("click", () => {
-  el("calendars-overlay").classList.add("hidden");
+  closeOverlay("calendars-overlay");
 });
 
 el("add-account-btn").addEventListener("click", () => {
@@ -311,11 +334,11 @@ function renderThemePicker() {
 
 el("theme-btn").addEventListener("click", () => {
   renderThemePicker();
-  el("theme-overlay").classList.remove("hidden");
+  openOverlay("theme-overlay");
 });
 
 el("close-theme-btn").addEventListener("click", () => {
-  el("theme-overlay").classList.add("hidden");
+  closeOverlay("theme-overlay");
 });
 
 // ---------------------------------------------------------------------
@@ -326,6 +349,7 @@ window.addEventListener("load", init);
 
 async function init() {
   renderDayNamesHeader();
+  startBoardTick();
 
   const result = await getAccounts();
   if (result.accounts.length === 0) {
@@ -383,13 +407,12 @@ async function onSignedIn() {
     setSyncStatus("Couldn't load your calendar list — will retry.");
   }
 
-  populateCalendarSelect();
+  refreshWriteControls();
   // Paint the heading for the current month before the first fetch, so a
   // failed first sync leaves an empty board for the right month rather
   // than no month at all. loadMonth redraws it once events arrive.
   displayedMonth = getMonthStart(currentMonthDate);
   renderMonthHeading(displayedMonth);
-  startClock();
   loadMonth();
   schedulePolling();
 }
@@ -479,16 +502,20 @@ function showSigninError(msg) {
 // "please sign in" state instead of a silently stale dashboard.
 function showSignInRequired(message) {
   if (pollTimer) clearInterval(pollTimer);
-  if (clockTimer) clearInterval(clockTimer);
   accounts = [];
   tokenByEmail = {};
+  displayedMonth = null; // so the tick stops trying to render a month we can't fetch
   showSigninScreen();
   showSigninError(message);
 }
 
 function schedulePolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(loadMonth, CONFIG.EVENT_POLL_MINUTES * 60 * 1000);
+  pollTimer = setInterval(() => {
+    // A dark board has nobody watching it; Google can wait until morning.
+    if (boardIsQuiet) return;
+    loadMonth();
+  }, CONFIG.EVENT_POLL_MINUTES * 60 * 1000);
 }
 
 // ---------------------------------------------------------------------
@@ -656,26 +683,57 @@ async function fetchAllCalendars(timeMin, timeMax) {
   return { events: sortEventsByStart(deduped), failed: failures.length };
 }
 
+// Google returns a page of events and a `nextPageToken` when there are more.
+// Asking for the API's maximum and then following the token is the difference
+// between a complete month and one whose far end is *silently missing* — the
+// events that never arrive are not there to look wrong, so the board renders
+// a short month that is indistinguishable from a quiet one.
+//
+// This matters more than it sounds, because singleEvents=true expands a
+// recurring event into one item per occurrence: a single daily event is worth
+// about 42 items across the six-week grid asked for below, so a couple of
+// recurring events plus ordinary family life can reach the 250 items Google
+// used to return by default.
+const MAX_EVENT_PAGES = 20; // 50,000 events in one six-week window — not a real state
+
 async function fetchEvents(cal, timeMin, timeMax) {
-  const url = new URL(
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events`
-  );
-  url.searchParams.set("timeMin", timeMin.toISOString());
-  url.searchParams.set("timeMax", timeMax.toISOString());
-  url.searchParams.set("singleEvents", "true");
-  url.searchParams.set("orderBy", "startTime");
+  const headers = { Authorization: `Bearer ${tokenByEmail[cal._accountEmail]}` };
+  const items = [];
+  let pageToken = null;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${tokenByEmail[cal._accountEmail]}` },
-  });
+  for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+    const url = new URL(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events`
+    );
+    url.searchParams.set("timeMin", timeMin.toISOString());
+    url.searchParams.set("timeMax", timeMax.toISOString());
+    url.searchParams.set("singleEvents", "true");
+    url.searchParams.set("orderBy", "startTime");
+    url.searchParams.set("maxResults", "2500");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-  if (!res.ok) {
-    const err = new Error(`Calendar fetch failed: ${res.status}`);
-    err.status = res.status;
-    throw err;
+    const res = await fetch(url, {
+      headers,
+    });
+
+    if (!res.ok) {
+      const err = new Error(`Calendar fetch failed: ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    const data = await res.json();
+    items.push(...(data.items || []));
+    pageToken = data.nextPageToken || null;
+    if (!pageToken) return items;
   }
-  const data = await res.json();
-  return data.items || [];
+
+  // Deliberately loud rather than a partial answer. Returning what we have
+  // would hand back a truncated calendar that renders exactly like a complete
+  // one — the failure this function exists to avoid. Better that the board
+  // says it couldn't load this calendar than that a month quietly ends early.
+  const err = new Error(`Calendar fetch exceeded ${MAX_EVENT_PAGES} pages`);
+  err.status = 0;
+  throw err;
 }
 
 function renderMonth(events) {
@@ -798,11 +856,20 @@ function renderMonth(events) {
 
 const CLOCK_TICK_MS = 5000; // fine enough that the displayed minute is never visibly stale
 
+// The month that was "this month" at the previous tick. Comparing it with
+// the wall clock on each tick is how the board notices the calendar rolling
+// over while it sits there.
+let lastSeenCurrentMonth = null;
+
 function updateClock(now = new Date()) {
-  const node = el("board-clock");
-  if (!node) return;
   const text = now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  if (node.textContent !== text) node.textContent = text;
+  // The clock on the quiet screen is its own element so that the board's
+  // clock can be hidden with the dashboard without the dark screen losing
+  // its only content.
+  for (const id of ["board-clock", "quiet-clock"]) {
+    const node = el(id);
+    if (node && node.textContent !== text) node.textContent = text;
+  }
 }
 
 /* A fingerprint of what today's cell is currently showing.
@@ -827,15 +894,90 @@ function todayInlineSignature(events, monthStart, now) {
     .join("|");
 }
 
-function startClock() {
+// ---------------------------------------------------------------------
+// Quiet hours
+//
+// An old TV left on all night is the one real cost of this board that
+// isn't a bug: a lit screen nobody is looking at, burning panel hours and
+// polling Google every three minutes for nothing. Quiet hours dim it to
+// near-black and pause the poll. Touching the board during them wakes it
+// for a few minutes, then it sleeps again.
+//
+// The time-window logic (including windows that cross midnight) lives in
+// quiet-hours.js, where it can be tested. This file only owns the
+// browser-side state.
+// ---------------------------------------------------------------------
+
+let quietWakeUntil = 0; // wake the board until this timestamp (ms)
+let boardIsQuiet = false;
+
+function isBoardQuiet(now = new Date()) {
+  if (now.getTime() < quietWakeUntil) return false;
+  return isQuietNow(now, CONFIG.QUIET_HOURS);
+}
+
+function applyQuietState(now = new Date()) {
+  const quiet = isBoardQuiet(now);
+  if (quiet === boardIsQuiet) return;
+  boardIsQuiet = quiet;
+  document.body.classList.toggle("quiet", quiet);
+  // Polling was paused while quiet; catch up immediately on waking so the
+  // board is current rather than showing whatever it had at bedtime.
+  if (!quiet) loadMonth();
+}
+
+function wakeFromQuiet() {
+  if (!boardIsQuiet) return;
+  quietWakeUntil = Date.now() + CONFIG.QUIET_WAKE_MINUTES * 60 * 1000;
+  applyQuietState();
+}
+
+// Capture phase, so the wake happens before the tap reaches anything
+// underneath — the quiet screen is opaque and intercepts the first tap
+// anyway, but this makes the intent explicit.
+document.addEventListener("pointerdown", wakeFromQuiet, true);
+document.addEventListener("keydown", wakeFromQuiet, true);
+
+function startBoardTick() {
   updateClock();
+  lastSeenCurrentMonth = getMonthStart(new Date());
+  applyQuietState();
   if (clockTimer) clearInterval(clockTimer);
   clockTimer = setInterval(() => {
     const now = new Date();
     updateClock(now);
+    applyQuietState(now);
+
+    // While it is dark there is nothing to keep honest: the grid is
+    // invisible and the poll is paused.
+    if (boardIsQuiet) return;
 
     // Nothing drawn yet (or signed out) — there is no cell to keep honest.
     if (!displayedMonth) return;
+
+    // Follow the calendar across a month boundary.
+    //
+    // Nothing else moves currentMonthDate: only the arrows and Today ever
+    // did, and the 3-minute poll re-reads it. So a board nobody touches kept
+    // showing whatever month it was on when it last loaded — on the 1st of a
+    // new month, a wall calendar with last month's name at the top of it.
+    //
+    // Advance only when the month on screen is the one that has *just
+    // ended*. Someone who deliberately paged back to look at last month's
+    // events, or forward at next month's, is left where they put it.
+    const nowMonth = getMonthStart(now);
+    const rolledOver =
+      lastSeenCurrentMonth !== null && nowMonth.getTime() !== lastSeenCurrentMonth.getTime();
+    const showingTheEndedMonth =
+      rolledOver && displayedMonth.getTime() === lastSeenCurrentMonth.getTime();
+    lastSeenCurrentMonth = nowMonth;
+
+    if (showingTheEndedMonth) {
+      currentMonthDate = new Date();
+      loadMonth(); // redraws for the new month, and refreshes the signature
+      return;
+    }
+
     const signature = todayInlineSignature(latestEvents, getMonthStart(currentMonthDate), now);
     if (signature !== todaySignature) renderMonth(latestEvents);
   }, CLOCK_TICK_MS);
@@ -919,19 +1061,18 @@ function showDayDetail(day, dateIso, dayEvents) {
   });
 
   el("day-detail-overlay").dataset.date = dateIso;
-  el("day-detail-overlay").classList.remove("hidden");
+  openOverlay("day-detail-overlay");
 }
 
 el("close-day-detail-btn").addEventListener("click", () => {
-  el("day-detail-overlay").classList.add("hidden");
+  closeOverlay("day-detail-overlay");
 });
 
 el("day-detail-add-btn").addEventListener("click", () => {
   const dateIso = el("day-detail-overlay").dataset.date;
-  el("day-detail-overlay").classList.add("hidden");
   resetToAddMode();
   el("ev-date").value = dateIso;
-  el("add-event-overlay").classList.remove("hidden");
+  swapOverlay("day-detail-overlay", "add-event-overlay");
 });
 
 function formatTime(dateTimeStr) {
@@ -968,7 +1109,7 @@ el("add-event-btn").addEventListener("click", () => {
   // toIsoDate, not toISOString — see calendar-dates.js. In the evening the
   // UTC-based version prefilled tomorrow's date.
   el("ev-date").value = toIsoDate(new Date());
-  el("add-event-overlay").classList.remove("hidden");
+  openOverlay("add-event-overlay");
 });
 
 el("cancel-add-btn").addEventListener("click", closeAddEvent);
@@ -979,11 +1120,11 @@ function resetToAddMode() {
   el("save-event-btn").textContent = "Add to calendar";
   el("delete-event-btn").classList.add("hidden");
   el("ev-calendar").disabled = false;
-  populateCalendarSelect();
+  refreshWriteControls();
 }
 
 function closeAddEvent() {
-  el("add-event-overlay").classList.add("hidden");
+  closeOverlay("add-event-overlay");
   el("add-event-form").reset();
   el("add-event-status").textContent = "";
   resetToAddMode();
@@ -999,7 +1140,7 @@ function openEditEvent(ev) {
   el("save-event-btn").textContent = "Save changes";
   el("delete-event-btn").classList.remove("hidden");
 
-  populateCalendarSelect();
+  refreshWriteControls();
   el("ev-calendar").value = ev._calendarId;
   el("ev-calendar").disabled = true; // moving an event to a different calendar isn't supported yet
 
@@ -1021,8 +1162,7 @@ function openEditEvent(ev) {
     el("ev-end").value = `${pad(end.getHours())}:${pad(end.getMinutes())}`;
   }
 
-  el("day-detail-overlay").classList.add("hidden");
-  el("add-event-overlay").classList.remove("hidden");
+  swapOverlay("day-detail-overlay", "add-event-overlay");
 }
 
 el("ev-allday").addEventListener("change", (e) => {
@@ -1075,6 +1215,14 @@ el("add-event-form").addEventListener("submit", async (e) => {
 
   const statusEl = el("add-event-status");
   const calendarId = editingEvent ? editingEvent.calendarId : el("ev-calendar").value;
+
+  // The buttons into this form are disabled when nothing is writeable, but
+  // the form has other ways in (an existing event's row). Don't send an empty
+  // calendar id to Google and report whatever comes back.
+  if (!calendarId) {
+    statusEl.textContent = "No calendar is available to add this event to.";
+    return;
+  }
 
   const body = buildEventBodyFromForm();
   if (!body) return;
@@ -1160,7 +1308,7 @@ el("delete-event-btn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------------
-// Dismissing overlays
+// Overlays: opening, closing, dismissing, and focus
 //
 // Every overlay used to be closable only by finding its button. On a
 // touch TV the thing people actually try is tapping the dimmed area
@@ -1171,6 +1319,10 @@ el("delete-event-btn").addEventListener("click", async () => {
 // whatever has been typed, so a stray tap outside an untouched form
 // dismisses it, but an entry in progress needs an explicit Cancel — the
 // board should not quietly lose an event to a mistimed tap.
+//
+// All opening and closing goes through openOverlay/closeOverlay, which is
+// what makes the focus handling possible: a panel that is visually modal
+// but leaves Tab walking around the grid behind it is only half a dialog.
 // ---------------------------------------------------------------------
 
 const OVERLAY_IDS = [
@@ -1179,6 +1331,58 @@ const OVERLAY_IDS = [
   "calendars-overlay",
   "add-event-overlay",
 ];
+
+// Which panels are open, in the order they were opened, and what had focus
+// before the first one did. Only used for focus — the DOM stays the source
+// of truth for what is actually visible (see topmostVisibleOverlayId).
+const overlayStack = [];
+let focusBeforeOverlays = null;
+
+function overlayCard(id) {
+  return el(id).querySelector(".overlay-card");
+}
+
+function openOverlay(id) {
+  const node = el(id);
+  node.classList.remove("hidden");
+  overlayStack.push(id);
+
+  // Captured only when the *first* panel opens, so closing a chain of them
+  // (day detail → add event) returns focus to the thing that started it
+  // rather than to a panel that has since been hidden.
+  if (overlayStack.length === 1) focusBeforeOverlays = document.activeElement;
+
+  // Focus the card rather than the first field: predictable, and it can't
+  // pop a keyboard up on a touch panel. tabindex is set here instead of in
+  // the markup because the card is not otherwise focusable.
+  const card = overlayCard(id);
+  card.tabIndex = -1;
+  card.focus();
+}
+
+function closeOverlay(id) {
+  el(id).classList.add("hidden");
+  const at = overlayStack.lastIndexOf(id);
+  if (at !== -1) overlayStack.splice(at, 1);
+
+  if (overlayStack.length === 0 && focusBeforeOverlays) {
+    const target = focusBeforeOverlays;
+    focusBeforeOverlays = null;
+    // The opener may have been re-rendered away (a day cell after a month
+    // change, say). Focus falling to the body is fine; throwing is not.
+    if (document.contains(target) && typeof target.focus === "function") target.focus();
+  }
+}
+
+// Hand over from one panel to another without focus falling back to the
+// page in between — the day-detail panel closes as the add-event form
+// opens, and the stack should survive that as one move, not two.
+function swapOverlay(fromId, toId) {
+  el(fromId).classList.add("hidden");
+  const at = overlayStack.lastIndexOf(fromId);
+  if (at !== -1) overlayStack.splice(at, 1);
+  openOverlay(toId);
+}
 
 function isAddEventFormDirty() {
   // Editing an existing event always requires a deliberate exit: there are
@@ -1195,22 +1399,38 @@ function canDismissOverlay(id) {
   return true;
 }
 
+// Closing the add-event form means something different from hiding a
+// panel: the form has to be reset as well, or the next open starts from a
+// half-filled event.
 function dismissOverlay(id) {
   if (id === "add-event-overlay") closeAddEvent();
-  else el(id).classList.add("hidden");
+  else closeOverlay(id);
 }
 
 function topmostVisibleOverlayId() {
-  // Scanned in reverse because the list is in DOM order, so the last
-  // visible one is the one painted on top. In normal use only one overlay
-  // is ever open — the day-detail panel hides itself before the add-event
-  // form appears — but picking the topmost is the answer that stays
-  // correct if that ever stops being true.
+  // Derived from the DOM rather than the stack, deliberately: this answers
+  // "what would the user see?", and stays right even if a panel was hidden
+  // by something that bypassed closeOverlay.
   for (let i = OVERLAY_IDS.length - 1; i >= 0; i -= 1) {
     const id = OVERLAY_IDS[i];
     if (!el(id).classList.contains("hidden")) return id;
   }
   return null;
+}
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(", ");
+
+function focusableWithin(root) {
+  return [...root.querySelectorAll(FOCUSABLE_SELECTOR)].filter(
+    (node) => node.offsetWidth > 0 || node.offsetHeight > 0
+  );
 }
 
 for (const id of OVERLAY_IDS) {
@@ -1232,9 +1452,40 @@ for (const id of OVERLAY_IDS) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
+  const open = topmostVisibleOverlayId();
 
-  // Overlays are modal: normally only the visible one can be open.
-  const id = topmostVisibleOverlayId();
-  if (id && canDismissOverlay(id)) dismissOverlay(id);
+  if (e.key === "Escape") {
+    // Overlays are modal: normally only the visible one can be open.
+    if (open && canDismissOverlay(open)) dismissOverlay(open);
+    return;
+  }
+
+  if (e.key !== "Tab" || !open) return;
+
+  // Keep Tab inside the open panel. Handled here rather than on the panel
+  // itself because once focus has escaped to the page, keydown no longer
+  // reaches a listener bound to the panel — which is exactly the case this
+  // is meant to prevent.
+  const card = overlayCard(open);
+  const stops = focusableWithin(card);
+  if (stops.length === 0) {
+    e.preventDefault();
+    card.focus();
+    return;
+  }
+
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  const active = document.activeElement;
+
+  if (!card.contains(active)) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+  } else if (e.shiftKey && active === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
 });

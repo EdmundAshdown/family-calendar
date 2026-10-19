@@ -68,7 +68,39 @@ h1, h2 {
   color: var(--danger);
 }
 
-/* ---- Buttons ---- */
+/* ---- Quiet hours (overnight) ----
+   Near-black regardless of theme: the point is to emit as little light as
+   possible, and that must not depend on which theme is selected. */
+.quiet-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  /* Keep it on top of the overlays too. */
+}
+
+body.quiet .quiet-screen { display: flex; }
+
+/* Hiding the dashboard and any open panel costs nothing visually once the
+   opaque screen is on top, but it stops them painting and being
+   hit-tested while the board is asleep. */
+body.quiet .dashboard,
+body.quiet .overlay {
+  visibility: hidden;
+}
+
+.quiet-clock {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  font-size: clamp(4rem, 12vw, 12rem);
+  color: rgba(255, 255, 255, 0.16);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
 
 .btn-primary {
   background: transparent;
@@ -103,6 +135,25 @@ h1, h2 {
   color: var(--text);
   border-color: var(--text-muted);
   background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* A button the board has closed off — currently the two ways into the
+   add-event form when no calendar is writeable. It has to look shut: on a
+   wall panel there is nobody to ask why the tap did nothing. */
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary:disabled:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
+.btn-secondary:disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
 }
 
 .btn-danger {
